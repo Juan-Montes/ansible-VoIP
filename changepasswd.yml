@@ -1,0 +1,74 @@
+---
+- name: Change Admin Password on Grandstream GXP Phones
+  hosts: inventory_Group
+  gather_facts: no
+  tasks:
+    - name: Get lockout status
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/api-get_lockout"
+        method: GET
+        headers:
+          Referer: "http://{{ inventory_hostname }}/"
+        return_content: true
+      register: lockout_status
+
+    - name: Perform login
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/dologin"
+        method: POST
+        headers:
+          Referer: "http://{{ inventory_hostname }}/"
+        body_format: form-urlencoded
+        body:
+          username: "user_http_api"
+          password: "password"
+        return_content: true
+      register: login_result
+
+    - name: Debug login result
+      ansible.builtin.debug:
+        var: login_result
+
+    - name: Check account status after login
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/json/contents/status_account.js"
+        method: GET
+        headers:
+          Cookie: "session-identity={{ login_result.json.body.sid }}; session-role=admin"
+        return_content: true
+      register: account_status
+
+    - name: Debug account status
+      ansible.builtin.debug:
+        var: account_status
+
+    - name: Change admin password
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/api-change_password"
+        method: POST
+        headers:
+          Content-Type: application/x-www-form-urlencoded
+          Cookie: "session-identity={{ login_result.json.body.sid }}; session-role=admin"
+          Referer: "http://{{ inventory_hostname }}/"
+        body:
+          olduser: ""
+          P196: ""
+          :confirmUserPwd: ""
+          oldadmin: "password_old"   # Contraseña actual del admin
+          P2: "password_new"   # Nueva contraseña
+          :confirmAdminPwd: "password_new"  # Confirmar nueva contraseña
+          sid: "{{ login_result.json.body.sid }}"
+        body_format: form-urlencoded
+        return_content: true
+      register: password_change_result
+
+    - name: Debug password change result
+      ansible.builtin.debug:
+        var: password_change_result
+
+    - name: Confirm successful password change
+      ansible.builtin.assert:
+        that:
+          - "'success' in password_change_result.content"
+        fail_msg: "Password change failed"
+        success_msg: "Password changed successfully"
