@@ -1,0 +1,102 @@
+---
+- name: Login to Grandstream API and Upload Phonebook
+  hosts: inventory_group
+  gather_facts: no
+  tasks:
+    - name: Get lockout status
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/api-get_lockout"
+        method: GET
+        headers:
+          Referer: "http://{{ inventory_hostname }}/"
+        return_content: true
+      register: lockout_status
+
+    - name: Perform login
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/dologin"
+        method: POST
+        headers:
+          Referer: "http://{{ inventory_hostname }}/"
+        body_format: form-urlencoded
+        body:
+          username: "user_voip_telephone"
+          password: "password"
+        return_content: true
+      register: login_result
+
+    - name: Debug login result
+      ansible.builtin.debug:
+        var: login_result
+
+    - name: Check account status after login
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/json/contents/status_account.js"
+        method: GET
+        headers:
+          Cookie: "session-identity={{ login_result.json.body.sid }}; session-role=admin"
+        return_content: true
+      register: account_status
+
+    - name: Debug account status
+      ansible.builtin.debug:
+        var: account_status
+
+    - name: Verify phonebook XML before upload
+      ansible.builtin.shell: "cat /path/phonebook.xml"
+      register: verify_phonebook
+
+    - name: Debug phonebook content
+      ansible.builtin.debug:
+        var: verify_phonebook.stdout
+
+    - name: Fetch phonebook management page to initialize
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/api.values.get"
+        method: POST
+        headers:
+          Cookie: "session-identity={{ login_result.json.body.sid }}; session-role=admin"
+          Referer: "http://{{ inventory_hostname }}/"
+        body_format: form-urlencoded
+        body: 
+          request: "vendor_fullname:P330:P6713:P331:P332:P333:P8462:P2914:P1526:P2970"
+          sid: "{{ login_result.json.body.sid }}"
+        return_content: true
+      register: phonebook_management
+
+    - name: Debug phonebook management response
+      ansible.builtin.debug:
+        var: phonebook_management
+
+    - name: Upload XML phonebook
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}/cgi-bin/phonebook_upload"
+        method: POST
+        headers:
+          Cookie: "session-identity={{ login_result.json.body.sid }}; session-role=admin"
+          Referer: "http://{{ inventory_hostname }}/"
+        body_format: form-multipart
+        body:
+          file: 
+            content: "{{ lookup('file', '/path/phonebook.xml') }}"
+            filename: "phonebook.xml"
+            content_type: "text/xml"
+          fname: "phonebook.xml"
+          sid: "{{ login_result.json.body.sid }}"
+        return_content: true
+      register: upload_result
+
+    - name: Debug upload result
+      ansible.builtin.debug:
+        var: upload_result
+
+    - name: Validate upload response
+      ansible.builtin.debug:
+        msg: "{{ upload_result.content | from_json }}"
+    
+    - name: Check if upload was successful
+      ansible.builtin.assert:
+        that:
+         - (upload_result.content | from_json).body == '0'
+        fail_msg: "Upload failed"
+        success_msg: "Phonebook uploaded successfully"
